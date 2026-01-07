@@ -2,6 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+from app.api.v1.router import api_router
+from app.api.v1.exception_handlers import user_not_found_handler, user_already_exists_handler
+from app.core.exceptions import UserNotFoundException, UserAlreadyExistsException
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -26,6 +30,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include API router
+app.include_router(api_router, prefix="/api/v1")
+
+# Register exception handlers
+app.add_exception_handler(UserNotFoundException, user_not_found_handler)
+app.add_exception_handler(UserAlreadyExistsException, user_already_exists_handler)
 
 
 @app.get("/")
