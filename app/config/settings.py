@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     debug: bool = False
     
     # Database
-    database_url: str = "postgresql+asyncpg://postgres:password@localhost:5432/api_test"
+    database_url: str = "postgresql+asyncpg://postgres:password1234@localhost:5432/api_test"
     database_pool_size: int = 20
     database_max_overflow: int = 10
     
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"  # Allow extra fields from .env file
 
 
 settings = Settings()

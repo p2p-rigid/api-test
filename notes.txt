@@ -1,0 +1,11 @@
+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
+
+ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bshrc
+
+ pkill -f "uvicorn app.main:app" 2>/dev/null; sleep 1; source .venv/bin/activate && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload 
+
+  PGPASSWORD=password1234 psql -h localhost -U postgres -d api_test -c "SELECT * FROM users;"
+
+  curl -X POST "http://localhost:8000/api/v1/users/" \
+>     -H "Content-Type: application/json" \
+>     -d '{"email": "john@example.com", "username": "johndoe", "password": "pass123", "first_name": "John", "last_name": "Doe"}'
