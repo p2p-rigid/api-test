@@ -72,7 +72,7 @@ def user_data() -> dict:
     return {
         "email": "test@example.com",
         "username": "testuser",
-        "password": "password123",
+        "password": "Password123!",
         "first_name": "Test",
         "last_name": "User",
     }
@@ -84,7 +84,7 @@ def user_data_2() -> dict:
     return {
         "email": "another@example.com",
         "username": "anotheruser",
-        "password": "password456",
+        "password": "Password456!",
         "first_name": "Another",
         "last_name": "User",
     }
