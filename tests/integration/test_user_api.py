@@ -30,7 +30,8 @@ async def test_create_user_duplicate_email(client: AsyncClient, user_data: dict)
 
     assert response.status_code == 409
     data = response.json()
-    assert "email" in data["detail"].lower()
+    assert data["error_code"] == "USER_ALREADY_EXISTS"
+    assert data["field"] == "email"
 
 
 @pytest.mark.asyncio
@@ -44,7 +45,8 @@ async def test_create_user_duplicate_username(client: AsyncClient, user_data: di
 
     assert response.status_code == 409
     data = response.json()
-    assert "username" in data["detail"].lower()
+    assert data["error_code"] == "USER_ALREADY_EXISTS"
+    assert data["field"] == "username"
 
 
 @pytest.mark.asyncio
