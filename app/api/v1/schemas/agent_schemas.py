@@ -11,6 +11,7 @@ class UsersNlQueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
     limit: Optional[int] = Field(default=None, ge=1)
     provider: Literal["google", "openrouter"] = "google"
+    session_id: Optional[str] = Field(default=None, description="Session ID to continue a conversation")
 
 
 class UsersNlQueryResponse(BaseModel):
@@ -30,5 +31,6 @@ class UsersNlQueryResponse(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     count: int = 0
     error: Optional[str] = None
+    session_id: Optional[str] = Field(default=None, description="Session ID for continuing conversation")
 
     model_config = ConfigDict(extra="forbid")

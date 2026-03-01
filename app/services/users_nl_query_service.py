@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 from typing import Any, Literal, cast
 
 import requests
@@ -15,6 +16,8 @@ from agents.tools.user_query_tools import query_users_tool
 from app.config.settings import settings
 
 Provider = Literal["google", "openrouter"]
+
+SESSION_TTL_SECONDS = 300
 
 
 class UsersNlQueryService:
@@ -31,21 +34,36 @@ class UsersNlQueryService:
     async def query_users(
         self,
         query: str,
+        user_id: str = "api_user",
+        session_id: str | None = None,
         limit: int | None = None,
         provider: Provider = "google",
     ) -> UsersQueryResult:
         """Execute natural-language user query and return structured result."""
 
         if provider == "openrouter":
-            return await self._query_users_openrouter(query=query, limit=limit)
-        return await self._query_users_google(query=query, limit=limit)
+            return await self._query_users_openrouter(
+                query=query, user_id=user_id, session_id=session_id, limit=limit
+            )
+        return await self._query_users_google(
+            query=query, user_id=user_id, session_id=session_id, limit=limit
+        )
 
-    async def _query_users_google(self, query: str, limit: int | None = None) -> UsersQueryResult:
+    async def _query_users_google(
+        self,
+        query: str,
+        user_id: str,
+        session_id: str | None,
+        limit: int | None = None,
+    ) -> UsersQueryResult:
         self._ensure_google_api_key()
 
-        session = await self._session_service.create_session(
+        await self._cleanup_expired_sessions(user_id=user_id)
+
+        session = await self._get_or_create_session(
             app_name="users_query_app",
-            user_id="api_user",
+            user_id=user_id,
+            session_id=session_id,
         )
 
         content = types.Content(role="user", parts=[types.Part(text=query)])
@@ -69,25 +87,91 @@ class UsersNlQueryService:
                         if part.function_response and isinstance(part.function_response.response, dict):
                             tool_payload = part.function_response.response
 
+        result_dict: dict[str, Any]
         if tool_payload is not None:
             result = UsersQueryResult.model_validate(tool_payload)
             if not result.summary and latest_text:
                 result.summary = latest_text
-            return result
+            result_dict = result.model_dump()
+            result_dict["session_id"] = session.id
+            return UsersQueryResult(**result_dict)
 
         if latest_text:
-            return self._result_from_text(latest_text, limit)
+            result = self._result_from_text(latest_text, limit)
+            result_dict = result.model_dump()
+            result_dict["session_id"] = session.id
+            return UsersQueryResult(**result_dict)
 
-        return UsersQueryResult(
+        result = UsersQueryResult(
             intent="clarification_needed",
             summary="I could not produce a query result.",
             error="No tool output received from agent run.",
         )
+        result_dict = result.model_dump()
+        result_dict["session_id"] = session.id
+        return UsersQueryResult(**result_dict)
 
-    async def _query_users_openrouter(self, query: str, limit: int | None = None) -> UsersQueryResult:
+    async def _get_or_create_session(
+        self,
+        *,
+        app_name: str,
+        user_id: str,
+        session_id: str | None,
+    ):
+        if session_id:
+            existing = await self._session_service.get_session(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            if existing:
+                current_time = time.time()
+                if current_time - existing.last_update_time < SESSION_TTL_SECONDS:
+                    return existing
+        return await self._session_service.create_session(
+            app_name=app_name,
+            user_id=user_id,
+        )
+
+    async def _cleanup_expired_sessions(self, *, user_id: str) -> None:
+        list_response = await self._session_service.list_sessions(
+            app_name="users_query_app",
+            user_id=user_id,
+        )
+        current_time = time.time()
+        for session in list_response.sessions:
+            if current_time - session.last_update_time >= SESSION_TTL_SECONDS:
+                await self._session_service.delete_session(
+                    app_name="users_query_app",
+                    user_id=user_id,
+                    session_id=session.id,
+                )
+
+    async def _query_users_openrouter(
+        self,
+        query: str,
+        user_id: str,
+        session_id: str | None,
+        limit: int | None = None,
+    ) -> UsersQueryResult:
+        await self._cleanup_expired_sessions(user_id=user_id)
+
+        session = await self._get_or_create_session(
+            app_name="users_query_app",
+            user_id=user_id,
+            session_id=session_id,
+        )
+
+        if not hasattr(self, "_conversation_history"):
+            self._conversation_history: dict[str, list[dict[str, str]]] = {}
+
+        history = self._conversation_history.get(session.id, [])
+
         api_key = self._ensure_openrouter_api_key()
 
-        plan = self._build_openrouter_plan(query=query, api_key=api_key, limit=limit)
+        plan = self._build_openrouter_plan(
+            query=query, api_key=api_key, limit=limit, conversation_history=history
+        )
         if isinstance(plan, UsersQueryResult):
             return plan
 
@@ -95,7 +179,15 @@ class UsersNlQueryService:
             plan["limit"] = limit
 
         tool_result = await query_users_tool(**plan)
-        return UsersQueryResult.model_validate(tool_result)
+        result = UsersQueryResult.model_validate(tool_result)
+
+        history.append({"role": "user", "content": query})
+        history.append({"role": "assistant", "content": result.summary})
+        self._conversation_history[session.id] = history[-10:]
+
+        result_dict = result.model_dump()
+        result_dict["session_id"] = session.id
+        return UsersQueryResult(**result_dict)
 
     def _build_openrouter_plan(
         self,
@@ -103,6 +195,7 @@ class UsersNlQueryService:
         query: str,
         api_key: str,
         limit: int | None,
+        conversation_history: list[dict[str, str]] | None = None,
     ) -> dict[str, Any] | UsersQueryResult:
         system_prompt = (
             "Convert the user request into a JSON object for a read-only users query tool. "
@@ -115,6 +208,14 @@ class UsersNlQueryService:
             "Otherwise return only a single JSON object for tool args."
         )
 
+        messages = [{"role": "system", "content": system_prompt}]
+        if conversation_history:
+            messages.extend(conversation_history)
+        messages.append({
+            "role": "user",
+            "content": f"query={query}\nlimit={limit if limit is not None else 'null'}",
+        })
+
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
@@ -124,13 +225,7 @@ class UsersNlQueryService:
             json={
                 "model": settings.openrouter_model,
                 "temperature": 0,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": f"query={query}\nlimit={limit if limit is not None else 'null'}",
-                    },
-                ],
+                "messages": messages,
             },
             timeout=20,
         )

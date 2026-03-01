@@ -6,7 +6,14 @@ from app.services.users_nl_query_service import get_users_nl_query_service
 
 
 class _FakeNlService:
-    async def query_users(self, query: str, limit: int | None = None, provider: str = "google"):
+    async def query_users(
+        self,
+        query: str,
+        user_id: str = "api_user",
+        session_id: str | None = None,
+        limit: int | None = None,
+        provider: str = "google",
+    ):
         if "create" in query.lower():
             return type(
                 "Result",
@@ -18,6 +25,7 @@ class _FakeNlService:
                     "filters": {"limit": limit, "provider": provider},
                     "count": 0,
                     "error": None,
+                    "session_id": "test-session-id",
                     "model_dump": lambda self, mode="json": {
                         "summary": self.summary,
                         "intent": self.intent,
@@ -25,6 +33,7 @@ class _FakeNlService:
                         "filters": self.filters,
                         "count": self.count,
                         "error": self.error,
+                        "session_id": self.session_id,
                     },
                 },
             )()
@@ -50,6 +59,7 @@ class _FakeNlService:
                 "filters": {"email": "test@example.com", "limit": limit, "provider": provider},
                 "count": 1,
                 "error": None,
+                "session_id": "test-session-id",
                 "model_dump": lambda self, mode="json": {
                     "summary": self.summary,
                     "intent": self.intent,
@@ -57,6 +67,7 @@ class _FakeNlService:
                     "filters": self.filters,
                     "count": self.count,
                     "error": self.error,
+                    "session_id": self.session_id,
                 },
             },
         )()

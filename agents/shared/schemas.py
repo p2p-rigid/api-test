@@ -65,5 +65,6 @@ class UsersQueryResult(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     count: int = 0
     error: Optional[str] = None
+    session_id: Optional[str] = Field(default=None, description="Session ID for continuing conversation")
 
     model_config = ConfigDict(extra="forbid")
