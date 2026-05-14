@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     google_api_key: Optional[str] = None
     google_adk_model: str = "gemini-2.0-flash"
     openrouter_api_key: Optional[str] = None
-    openrouter_model: str = "openai/gpt-4o-mini"
+    openrouter_model: str = "deepseek/deepseek-chat"
     users_nl_default_limit: int = 20
     users_nl_max_limit: int = 100
     

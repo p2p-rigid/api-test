@@ -12,6 +12,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!frontend/src/lib/
 parts/
 sdist/
 var/
@@ -59,7 +60,13 @@ logs/
 .DS_Store
 Thumbs.db
 
-#others
+# Node
+node_modules/
+
+# E2E test results
+test-results/
+
+# others
 temp.txt
 notes.txt
 AGENTS.md

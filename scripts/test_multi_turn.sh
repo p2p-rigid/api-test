@@ -17,9 +17,9 @@ RESPONSE1=$(curl -s -X POST "$BASE_URL" \
   -H "X-User-ID: $USER_ID" \
   -d "{\"query\": \"list all users\", \"provider\": \"$PROVIDER\"}")
 
-echo "$RESPONSE1" | python -m json.tool
+echo "$RESPONSE1" | python3 -m json.tool
 
-SESSION_ID=$(echo "$RESPONSE1" | python -c "import sys, json; print(json.load(sys.stdin).get('session_id', ''))")
+SESSION_ID=$(echo "$RESPONSE1" | python3 -c "import sys, json; print(json.load(sys.stdin).get('session_id', ''))")
 
 if [ -z "$SESSION_ID" ]; then
     echo "ERROR: No session_id returned"
@@ -36,7 +36,7 @@ RESPONSE2=$(curl -s -X POST "$BASE_URL" \
   -H "X-User-ID: $USER_ID" \
   -d "{\"query\": \"show only active users\", \"session_id\": \"$SESSION_ID\", \"provider\": \"$PROVIDER\"}")
 
-echo "$RESPONSE2" | python -m json.tool
+echo "$RESPONSE2" | python3 -m json.tool
 
 echo ""
 echo "=== Request 3: Find user by email (continuing session) ==="
@@ -45,7 +45,7 @@ RESPONSE3=$(curl -s -X POST "$BASE_URL" \
   -H "X-User-ID: $USER_ID" \
   -d "{\"query\": \"find user with email test@example.com\", \"session_id\": \"$SESSION_ID\", \"provider\": \"$PROVIDER\"}")
 
-echo "$RESPONSE3" | python -m json.tool
+echo "$RESPONSE3" | python3 -m json.tool
 
 echo ""
 echo "========================================="

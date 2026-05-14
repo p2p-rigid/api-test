@@ -1,12 +1,7 @@
-import json
-import os
-import re
-import time
 from typing import Any, Literal, cast
 
 import requests
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
 from google.adk.utils.context_utils import Aclosing
 from google.genai import types
 
@@ -14,17 +9,18 @@ from agents.shared.schemas import UsersQueryResult
 from agents.specialists.users_query_agent import users_query_agent
 from agents.tools.user_query_tools import query_users_tool
 from app.config.settings import settings
+from app.services.default_nl_query_service import DefaultNlQueryService
 
 Provider = Literal["google", "openrouter"]
 
 SESSION_TTL_SECONDS = 300
 
 
-class UsersNlQueryService:
+class UsersNlQueryService(DefaultNlQueryService):
     """Orchestrates natural-language users queries across supported providers."""
 
     def __init__(self) -> None:
-        self._session_service = InMemorySessionService()
+        super().__init__("users_query_app")
         self._runner = Runner(
             app_name="users_query_app",
             agent=users_query_agent,
@@ -61,7 +57,6 @@ class UsersNlQueryService:
         await self._cleanup_expired_sessions(user_id=user_id)
 
         session = await self._get_or_create_session(
-            app_name="users_query_app",
             user_id=user_id,
             session_id=session_id,
         )
@@ -111,42 +106,6 @@ class UsersNlQueryService:
         result_dict["session_id"] = session.id
         return UsersQueryResult(**result_dict)
 
-    async def _get_or_create_session(
-        self,
-        *,
-        app_name: str,
-        user_id: str,
-        session_id: str | None,
-    ):
-        if session_id:
-            existing = await self._session_service.get_session(
-                app_name=app_name,
-                user_id=user_id,
-                session_id=session_id,
-            )
-            if existing:
-                current_time = time.time()
-                if current_time - existing.last_update_time < SESSION_TTL_SECONDS:
-                    return existing
-        return await self._session_service.create_session(
-            app_name=app_name,
-            user_id=user_id,
-        )
-
-    async def _cleanup_expired_sessions(self, *, user_id: str) -> None:
-        list_response = await self._session_service.list_sessions(
-            app_name="users_query_app",
-            user_id=user_id,
-        )
-        current_time = time.time()
-        for session in list_response.sessions:
-            if current_time - session.last_update_time >= SESSION_TTL_SECONDS:
-                await self._session_service.delete_session(
-                    app_name="users_query_app",
-                    user_id=user_id,
-                    session_id=session.id,
-                )
-
     async def _query_users_openrouter(
         self,
         query: str,
@@ -157,7 +116,6 @@ class UsersNlQueryService:
         await self._cleanup_expired_sessions(user_id=user_id)
 
         session = await self._get_or_create_session(
-            app_name="users_query_app",
             user_id=user_id,
             session_id=session_id,
         )
@@ -198,22 +156,29 @@ class UsersNlQueryService:
         conversation_history: list[dict[str, str]] | None = None,
     ) -> dict[str, Any] | UsersQueryResult:
         system_prompt = (
+            "You are a JSON generator. Return ONLY valid JSON, no explanations, no examples, no markdown. "
             "Convert the user request into a JSON object for a read-only users query tool. "
             "Allowed lookup_type values: id, email, username, list. "
             "Only include these keys: lookup_type, user_id, email, username, active_only, skip, limit. "
-            "If request is outside read-only users queries, return exactly: "
-            '{"intent":"out_of_scope","summary":"Read-only users query endpoint.","data":[],"filters":{},"count":0,"error":null}. '
-            "For ambiguous requests, return exactly: "
-            '{"intent":"clarification_needed","summary":"Please clarify your users query.","data":[],"filters":{},"count":0,"error":null}. '
-            "Otherwise return only a single JSON object for tool args."
+            "If request is outside read-only users queries, return exactly this JSON: "
+            "{\"intent\":\"out_of_scope\",\"summary\":\"Read-only users query endpoint.\",\"data\":[],\"filters\":{},\"count\":0,\"error\":null} "
+            "For ambiguous requests, return exactly this JSON: "
+            "{\"intent\":\"clarification_needed\",\"summary\":\"Please clarify your users query.\",\"data\":[],\"filters\":{},\"count\":0,\"error\":null} "
+            "Otherwise return ONLY a single JSON object, nothing else."
+
         )
 
         messages = [{"role": "system", "content": system_prompt}]
+
         if conversation_history:
-            messages.extend(conversation_history)
+            history_context = "The user is having a conversation about querying users. Previous messages:\n"
+            for msg in conversation_history:
+                history_context += f"{msg['role'].upper()}: {msg['content']}\n"
+            messages.append({"role": "system", "content": history_context})
+
         messages.append({
             "role": "user",
-            "content": f"query={query}\nlimit={limit if limit is not None else 'null'}",
+            "content": f"Current query: {query}\nlimit={limit if limit is not None else 'null'}",
         })
 
         response = requests.post(
@@ -267,26 +232,6 @@ class UsersNlQueryService:
 
         return cast(dict[str, Any], parsed)
 
-    def _parse_json_content(self, content: str) -> dict[str, Any] | None:
-        stripped = content.strip()
-        try:
-            parsed = json.loads(stripped)
-            if isinstance(parsed, dict):
-                return parsed
-        except ValueError:
-            pass
-
-        fenced_match = re.search(r"```(?:json)?\\s*(\{.*?\})\\s*```", stripped, re.DOTALL)
-        if fenced_match:
-            try:
-                parsed = json.loads(fenced_match.group(1))
-                if isinstance(parsed, dict):
-                    return parsed
-            except ValueError:
-                return None
-
-        return None
-
     def _result_from_text(self, text: str, limit: int | None) -> UsersQueryResult:
         lowered = text.lower()
         if "out_of_scope" in lowered or "out of scope" in lowered:
@@ -301,19 +246,6 @@ class UsersNlQueryService:
             summary=text,
             filters={"limit": limit} if limit is not None else {},
         )
-
-    def _ensure_google_api_key(self) -> None:
-        key = settings.google_api_key or os.getenv("GOOGLE_API_KEY")
-        if not key or key == "your-google-api-key-here":
-            raise RuntimeError("GOOGLE_API_KEY is required for users NL query endpoint")
-
-        os.environ["GOOGLE_API_KEY"] = key
-
-    def _ensure_openrouter_api_key(self) -> str:
-        key = settings.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
-        if not key:
-            raise RuntimeError("OPENROUTER_API_KEY is required when provider=openrouter")
-        return key
 
 
 users_nl_query_service = UsersNlQueryService()
